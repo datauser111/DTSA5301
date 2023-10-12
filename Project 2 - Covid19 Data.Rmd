@@ -1,0 +1,259 @@
+---
+title: "Covid19 Data"
+author: "Philip C"
+date: "2023-10-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Import Libraries
+
+```{r library, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+```
+
+
+### Import Datasets
+
+```{r setup_urls, message=FALSE, warnings=FALSE}
+# All files begin with this string.
+url_in <- ("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/")
+
+# Vector containing four file names.
+file_names <- 
+  c("time_series_covid19_confirmed_global.csv",
+  "time_series_covid19_deaths_global.csv",
+  "time_series_covid19_confirmed_US.csv",
+  "time_series_covid19_deaths_US.csv")
+
+# String concatenate url_in and each of the file names.
+urls <- str_c(url_in, file_names)
+```
+
+```{r import_data, message=FALSE, warnings=FALSE}
+# Store each dataset in a variable.
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+```
+
+### Tidy Global Data
+```{r tidy_global_data}
+global_cases <- global_cases %>%
+  pivot_longer(cols =
+                 -c('Province/State',
+                    'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "cases")
+```
+
+```{r tidy_global_deaths}
+global_deaths <- global_deaths %>%
+  pivot_longer(cols =
+                 -c('Province/State',
+                    'Country/Region', Lat, Long),
+               names_to = "date",
+               values_to = "deaths")
+```
+
+```{r join_global_data}
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+```
+
+### Summary of Global Data
+
+```{r global_summary}
+summary(global)
+```
+
+
+### Tidy US Data
+```{r tidy_US_cases}
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases")  %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select (-c(Lat, Long_))
+```
+
+```{r tidy_US_deaths}
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths")  %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select (-c(Lat, Long_))
+```
+
+```{r join_US_data}
+US <- US_cases %>%
+  full_join(US_deaths)
+```
+
+
+### Summary of US Data
+
+```{r US_summary}
+summary(US)
+```
+
+
+## Visualizations and Analysis (Wisconsin)
+
+
+```{r wisc_df}
+
+# Filter US dataset for only the rows where Province_State is Wisconsin.
+wisc <- US %>%
+  filter(Province_State == "Wisconsin", cases > 0) %>%
+  group_by(date, Admin2)
+
+# Group Wisconsin data by county and add mortality rate column.
+wisc_counties <- wisc %>%
+  group_by(Admin2, date) %>%
+  mutate(mortality_rate = deaths / cases) %>%
+  select(Admin2, date, cases, deaths, Population, mortality_rate)
+
+# Sum all Wisconsin county cases, deaths, and populations.
+wisc_totals <- wisc %>%
+  group_by(date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>%
+  select(date, cases, deaths, Population) %>%
+  ungroup()
+
+# Create a dataframe that contains the most recent statistics for each Wisconsin county.
+# Updated April 22, 2022.
+current_counties <- wisc_counties %>% 
+  filter(date == "2022-04-22") %>%
+  group_by(Admin2) %>%
+  mutate(county_mortality_rate = deaths/cases) %>%
+  select(date, Admin2, cases, deaths, Population, county_mortality_rate) %>%
+  ungroup()
+
+```
+
+
+```{r analyze_wisc}
+
+# Total Wisconsin cases to date.
+max(wisc_totals$cases)
+
+# Total Wisconsin deaths to date.
+max(wisc_totals$deaths)
+
+# Wisconsin mortality rate:
+max(wisc_totals$deaths) / max(wisc_totals$cases)
+
+# Wisconsin county with the highest mortality rate:
+current_counties %>% slice_max(county_mortality_rate)
+
+# Wisconsin county with the lowest mortality rate:
+current_counties %>% slice_min(county_mortality_rate)
+
+```
+
+
+```{r iron_county}
+
+# Create a new dataframe for Iron County and add columns for daily new cases and deaths.
+iron_county <- wisc_counties %>%
+  filter(Admin2 == "Iron") %>%
+  group_by(Admin2) %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths)) %>%
+  select(date, Admin2, cases, deaths, Population, new_cases, new_deaths)
+
+iron_county <- iron_county %>%
+  filter(new_cases >= 0, new_deaths >=0)
+
+ggplot(iron_county, aes(x=date)) +
+  geom_line(aes(y = new_cases), color="steelblue") +
+  scale_x_date(date_labels = "%Y %b %d", date_breaks = "4 month") +
+  theme_bw() +
+  labs(x = "Dates",
+       y = "New COVID19 Cases",
+       title = "Iron County New COVID19 Cases - Time Series")
+
+ggplot(iron_county, aes(x=date)) +
+  geom_line(aes(y = new_deaths), color = "dark red") +
+    scale_x_date(date_labels = "%Y %b %d", date_breaks = "4 month") +
+  theme_bw() +
+  labs(x = "Dates",
+       y = "New COVID19 Deaths",
+       title = "Iron County New COVID19 Deaths - Time Series")
+
+```
+
+
+### Wisconsin County with the Lowest Mortality Rate: Buffalo County
+
+
+```{r buffalo_county}
+
+# Create a new dataframe for Iron County and add columns for daily new cases and deaths.
+buffalo_county <- wisc_counties %>%
+  filter(Admin2 == "Buffalo") %>%
+  group_by(Admin2) %>%
+  mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths)) %>%
+  select(date, Admin2, cases, deaths, Population, new_cases, new_deaths)
+
+buffalo_county <- buffalo_county %>%
+  filter(new_cases >= 0, new_deaths >=0)
+
+ggplot(buffalo_county, aes(x=date)) +
+  geom_line(aes(y = new_cases), color="steelblue") +
+  scale_x_date(date_labels = "%Y %b %d", date_breaks = "4 month") +
+  theme_bw() +
+  labs(x = "Dates",
+       y = "New COVID19 Cases",
+       title = "Buffalo County New COVID19 Cases - Time Series")
+
+ggplot(buffalo_county, aes(x=date)) +
+  geom_line(aes(y = new_deaths), color = "dark red") +
+    scale_x_date(date_labels = "%Y %b %d", date_breaks = "4 month") +
+  theme_bw() +
+  labs(x = "Dates",
+       y = "New COVID19 Deaths",
+       title = "Buffalo County New COVID19 Deaths - Time Series")
+
+```
+
+### Modeling with Linear Regression
+
+
+```{r county_model}
+
+# Prepare the data set for modeling.
+wisc_county_totals <- wisc_counties %>%
+  group_by(Admin2) %>%
+  summarize(deaths = max(deaths), cases = max(cases), Population = max(Population)) %>%
+  mutate(cases_per_hundred = 100 * cases / Population, deaths_per_hundred = 100 * deaths / Population ) %>%
+  select(Admin2, cases, deaths, Population, cases_per_hundred, deaths_per_hundred)
+
+# Build the linear regression model.
+lr_model <- lm(deaths_per_hundred ~ cases_per_hundred, data = wisc_county_totals)
+
+# Display summmary for model analysis.
+summary(lr_model)
+
+```
+
+### Sources of Bias
+
+COVID19 is a topic that has a lot of bias around it. People on both sides of the political spectrum seem to be 100% sure they are right about the topic and cannot seem to be convinced otherwise. Unfortunately, reporters also fall under this bias on both sides, spreading selective data and misinformation that further polarizes the views of individuals. I tried to be as unbiased as possible and look only at the numbers for this project. I selected areas from the data at random to ensure I was not trying to prove the point that I already believe.
+
